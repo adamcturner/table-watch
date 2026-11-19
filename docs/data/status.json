@@ -1,0 +1,32 @@
+{
+  "generated_at": "2026-11-19T19:51:04Z",
+  "venues": [
+    {
+      "name": "Vern's",
+      "city": "Charleston, SC",
+      "provider": "resy",
+      "url": "https://resy.com/cities/charleston-sc/venues/verns",
+      "party_size": 2,
+      "tracking_since": "2026-11-19T19:51:04Z",
+      "last_checked": "2026-11-19T19:51:04Z",
+      "check_ok": true,
+      "days_checked": 30,
+      "last_seen": "",
+      "available_now": []
+    },
+    {
+      "name": "Chubby Fish",
+      "city": "Charleston, SC",
+      "provider": "opentable",
+      "url": "https://www.opentable.com/r/chubby-fish-charleston",
+      "party_size": 2,
+      "tracking_since": "2026-11-19T19:51:04Z",
+      "last_checked": "2026-11-19T19:51:04Z",
+      "check_ok": false,
+      "error": "OpenTable checking is not implemented yet",
+      "days_checked": 0,
+      "last_seen": "",
+      "available_now": []
+    }
+  ]
+}

@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Table Watch</title>
+<meta name="description" content="Restaurants being tracked and the last time an open table was seen at each.">
+<style>
+  :root {
+    --bg: #faf9f7; --card: #ffffff; --text: #1f1d1a; --muted: #6b665e; --line: #e6e2db;
+    --good: #1f7a4d; --good-bg: #e4f3ea; --warn: #8a5a00; --warn-bg: #fbf0d9; --none: #5b5750; --none-bg: #eeebe5;
+    --err: #9c2f2f; --err-bg: #f8e3e3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #151412; --card: #1e1c19; --text: #efece6; --muted: #9a958b; --line: #34312c;
+      --good: #6fd09c; --good-bg: #17301f; --warn: #e5b45c; --warn-bg: #33270e; --none: #b3aea4; --none-bg: #2a2723;
+      --err: #f19a9a; --err-bg: #3a1f1f;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 16px 56px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 18px 18px 14px; margin-bottom: 14px; }
+  .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; justify-content: space-between; }
+  .name { font-size: 1.2rem; font-weight: 650; margin: 0; }
+  .name a { color: inherit; text-decoration: none; border-bottom: 1px solid var(--line); }
+  .meta { color: var(--muted); font-size: .9rem; }
+  .badge { display: inline-block; font-size: .8rem; font-weight: 600; padding: 3px 10px; border-radius: 999px; }
+  .b-good { background: var(--good-bg); color: var(--good); }
+  .b-warn { background: var(--warn-bg); color: var(--warn); }
+  .b-none { background: var(--none-bg); color: var(--none); }
+  .b-err { background: var(--err-bg); color: var(--err); }
+  .seen { margin: 12px 0 4px; font-size: 1.05rem; }
+  .seen strong { font-weight: 650; }
+  .detail { margin: 8px 0 0; padding: 0; list-style: none; font-size: .92rem; }
+  .detail li { padding: 3px 0; border-top: 1px solid var(--line); display: flex; gap: 10px; }
+  .detail li:first-child { border-top: 0; }
+  .detail .d { min-width: 128px; color: var(--muted); }
+  .foot { color: var(--muted); font-size: .82rem; margin-top: 12px; }
+  .note { color: var(--muted); font-size: .85rem; margin-top: 28px; }
+  .err-text { color: var(--err); font-size: .88rem; margin-top: 6px; }
+  #state { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Table Watch</h1>
+  <p class="sub">Restaurants being tracked and the last time an open table was seen at each.</p>
+  <div id="state">Loading…</div>
+  <div id="list"></div>
+  <p class="note" id="note"></p>
+</main>
+<script>
+(function () {
+  var list = document.getElementById('list');
+  var state = document.getElementById('state');
+  var note = document.getElementById('note');
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined) e.textContent = text;
+    return e;
+  }
+
+  function ago(iso) {
+    var s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+    if (s < 90) return 'just now';
+    var m = Math.round(s / 60);
+    if (m < 90) return m + ' min ago';
+    var h = Math.round(s / 3600);
+    if (h < 36) return h + ' hr ago';
+    var d = Math.round(s / 86400);
+    return d + ' days ago';
+  }
+
+  function full(iso) {
+    return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  }
+
+  function day(dateStr) {
+    var p = dateStr.split('-');
+    var d = new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]));
+    return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  }
+
+  function clock(t) {
+    var p = t.split(':');
+    var h = Number(p[0]);
+    return ((h + 11) % 12 + 1) + ':' + p[1] + (h < 12 ? ' am' : ' pm');
+  }
+
+  function slotList(days) {
+    var ul = el('ul', 'detail');
+    days.slice(0, 8).forEach(function (d) {
+      var li = el('li');
+      li.appendChild(el('span', 'd', day(d.date)));
+      li.appendChild(el('span', '', d.times.map(clock).join(', ')));
+      ul.appendChild(li);
+    });
+    if (days.length > 8) {
+      var more = el('li');
+      more.appendChild(el('span', 'd', '+' + (days.length - 8) + ' more dates'));
+      ul.appendChild(more);
+    }
+    return ul;
+  }
+
+  function card(v) {
+    var c = el('div', 'card');
+    var head = el('div', 'head');
+    var left = el('div');
+    var h = el('h2', 'name');
+    var a = el('a', '', v.name);
+    a.href = v.url; a.target = '_blank'; a.rel = 'noopener';
+    h.appendChild(a);
+    left.appendChild(h);
+    left.appendChild(el('div', 'meta', v.city + ' · ' + v.provider.replace('opentable', 'OpenTable').replace('resy', 'Resy') + ' · party of ' + v.party_size));
+    head.appendChild(left);
+
+    var checkable = v.days_checked > 0;
+    var open = v.available_now && v.available_now.length > 0;
+    var badge;
+    if (!checkable) badge = el('span', 'badge b-err', 'Not checkable yet');
+    else if (open) badge = el('span', 'badge b-good', 'Open now');
+    else badge = el('span', 'badge b-none', 'No tables open');
+    head.appendChild(badge);
+    c.appendChild(head);
+
+    var seen = el('p', 'seen');
+    if (!checkable) {
+      seen.textContent = 'No successful check so far, so no sightings are recorded.';
+    } else if (open) {
+      seen.appendChild(document.createTextNode('Seen on the latest check, '));
+      seen.appendChild(el('strong', '', ago(v.last_checked)));
+      seen.appendChild(document.createTextNode('.'));
+    } else if (v.last_seen) {
+      seen.appendChild(document.createTextNode('Last seen with a table: '));
+      var s = el('strong', '', ago(v.last_seen));
+      s.title = full(v.last_seen);
+      seen.appendChild(s);
+      seen.appendChild(document.createTextNode(' (' + full(v.last_seen) + ').'));
+    } else {
+      seen.appendChild(document.createTextNode('No table seen since tracking began '));
+      seen.appendChild(el('strong', '', full(v.tracking_since)));
+      seen.appendChild(document.createTextNode('.'));
+    }
+    c.appendChild(seen);
+
+    if (open) {
+      c.appendChild(slotList(v.available_now));
+    } else if (v.last_seen && v.last_seen_slots && v.last_seen_slots.length) {
+      var lab = el('div', 'meta', 'What was open at that sighting:');
+      lab.style.marginTop = '8px';
+      c.appendChild(lab);
+      c.appendChild(slotList(v.last_seen_slots));
+    }
+
+    if (v.error) c.appendChild(el('div', 'err-text', 'Last check reported: ' + v.error));
+
+    var foot = 'Last checked ' + ago(v.last_checked) + ' · ' + v.days_checked + ' days ahead scanned · tracking since ' + new Date(v.tracking_since).toLocaleDateString();
+    c.appendChild(el('div', 'foot', foot));
+    return c;
+  }
+
+  fetch('data/status.json?t=' + Date.now())
+    .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+    .then(function (data) {
+      state.remove();
+      data.venues.forEach(function (v) { list.appendChild(card(v)); });
+      note.textContent = 'Checks run automatically about every 30 minutes and look up to 30 days ahead. Times are the restaurant\'s local time. Data updated ' + full(data.generated_at) + '.';
+    })
+    .catch(function (e) {
+      state.textContent = 'No data yet (' + e.message + '). The first scheduled check will create it.';
+    });
+})();
+</script>
+</body>
+</html>
