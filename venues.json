@@ -8,11 +8,29 @@
     "party_size": 2
   },
   {
+    "name": "The Obstinate Daughter",
+    "city": "Sullivan's Island, SC",
+    "provider": "resy",
+    "url": "https://resy.com/cities/charleston-sc/venues/the-obstinate-daughter",
+    "timezone": "America/New_York",
+    "party_size": 2
+  },
+  {
     "name": "Chubby Fish",
     "city": "Charleston, SC",
     "provider": "opentable",
     "url": "https://www.opentable.com/r/chubby-fish-charleston",
     "timezone": "America/New_York",
-    "party_size": 2
+    "party_size": 2,
+    "release_notes": [
+      {
+        "text": "New reservations are released each day, Tuesday through Saturday, at noon, with availability two weeks out from that date.",
+        "source": "Chubby Fish website"
+      },
+      {
+        "text": "Starting Oct. 13, 12 reservable seats per night are offered to OpenTable Gold members; walk-ins remain a cornerstone of service.",
+        "source": "Post and Courier"
+      }
+    ]
   }
 ]

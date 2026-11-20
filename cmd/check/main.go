@@ -16,12 +16,24 @@ import (
 )
 
 type Venue struct {
-	Name      string `json:"name"`
-	City      string `json:"city"`
-	Provider  string `json:"provider"`
-	URL       string `json:"url"`
-	Timezone  string `json:"timezone"`
-	PartySize int    `json:"party_size"`
+	Name         string `json:"name"`
+	City         string `json:"city"`
+	Provider     string `json:"provider"`
+	URL          string `json:"url"`
+	Timezone     string `json:"timezone"`
+	PartySize    int    `json:"party_size"`
+	ReleaseNotes []Note `json:"release_notes,omitempty"` // hand-written notes for providers that expose none
+}
+
+// Note is one statement about when reservations open, with where it came from.
+type Note struct {
+	Text   string `json:"text"`
+	Source string `json:"source"`
+}
+
+// ReleaseNoter is implemented by providers that can read a venue's booking-window policy.
+type ReleaseNoter interface {
+	ReleaseNotes(ctx context.Context, v Venue) ([]Note, error)
 }
 
 // DayAvailability lists the bookable start times (venue local, HH:MM) on one date.
@@ -44,6 +56,8 @@ type VenueStatus struct {
 	LastSeen      string            `json:"last_seen"`
 	LastSeenSlots []DayAvailability `json:"last_seen_slots,omitempty"`
 	AvailableNow  []DayAvailability `json:"available_now"`
+	FurthestOpen  string            `json:"furthest_open,omitempty"`
+	ReleaseNotes  []Note            `json:"release_notes,omitempty"`
 }
 
 type Status struct {
@@ -98,6 +112,7 @@ func main() {
 			st.TrackingSince = old.TrackingSince
 			st.LastSeen = old.LastSeen
 			st.LastSeenSlots = old.LastSeenSlots
+			st.ReleaseNotes = old.ReleaseNotes
 		}
 
 		loc, err := time.LoadLocation(v.Timezone)
@@ -126,9 +141,24 @@ func main() {
 		if st.AvailableNow == nil {
 			st.AvailableNow = []DayAvailability{}
 		}
+		if n := len(st.AvailableNow); n > 0 {
+			st.FurthestOpen = st.AvailableNow[n-1].Date
+		}
+		if err == nil {
+			if rn, ok := p.(ReleaseNoter); ok {
+				if notes, nerr := rn.ReleaseNotes(ctx, v); nerr == nil && len(notes) > 0 {
+					st.ReleaseNotes = notes
+				}
+			}
+		}
+		if len(v.ReleaseNotes) > 0 {
+			st.ReleaseNotes = v.ReleaseNotes
+		}
 		if len(st.AvailableNow) > 0 {
 			st.LastSeen = now.Format(time.RFC3339)
-			st.LastSeenSlots = st.AvailableNow
+			st.LastSeenSlots = nil // available_now already holds them
+		} else if seenBefore && len(old.AvailableNow) > 0 {
+			st.LastSeenSlots = old.AvailableNow
 		}
 		log.Printf("%s: ok=%v checked=%d/%d open_dates=%d err=%q", v.Name, st.CheckOK, st.DaysChecked, len(dates), len(st.AvailableNow), st.Error)
 		next.Venues = append(next.Venues, st)

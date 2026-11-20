@@ -42,6 +42,10 @@
   .foot { color: var(--muted); font-size: .82rem; margin-top: 12px; }
   .note { color: var(--muted); font-size: .85rem; margin-top: 28px; }
   .err-text { color: var(--err); font-size: .88rem; margin-top: 6px; }
+  .release { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+  .rel-title { font-size: .8rem; font-weight: 650; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .rel-note { margin: 4px 0 0; font-size: .92rem; }
+  .rel-src { color: var(--muted); font-size: .82rem; white-space: nowrap; }
   #state { color: var(--muted); }
 </style>
 </head>
@@ -158,6 +162,23 @@
       c.appendChild(lab);
       c.appendChild(slotList(v.last_seen_slots));
     }
+
+    var rel = el('div', 'release');
+    rel.appendChild(el('div', 'rel-title', 'When reservations open'));
+    if (v.release_notes && v.release_notes.length) {
+      v.release_notes.forEach(function (n) {
+        var p = el('p', 'rel-note');
+        p.appendChild(document.createTextNode('“' + n.text + '” '));
+        p.appendChild(el('span', 'rel-src', '— ' + n.source));
+        rel.appendChild(p);
+      });
+    } else {
+      rel.appendChild(el('p', 'rel-note', 'No release policy found on the listing.'));
+    }
+    if (v.furthest_open) {
+      rel.appendChild(el('p', 'rel-note', 'Furthest-out open date on the latest check: ' + day(v.furthest_open) + '.'));
+    }
+    c.appendChild(rel);
 
     if (v.error) c.appendChild(el('div', 'err-text', 'Last check reported: ' + v.error));
 

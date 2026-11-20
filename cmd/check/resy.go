@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -23,6 +24,7 @@ const (
 type resyProvider struct {
 	http   *http.Client
 	apiKey string
+	cache  map[string]resyVenueInfo
 }
 
 func newResy() *resyProvider {
@@ -60,39 +62,96 @@ func (r *resyProvider) get(ctx context.Context, path string, q url.Values) ([]by
 	return b, nil
 }
 
-// venueID resolves https://resy.com/cities/<location>/venues/<slug> to Resy's numeric ID.
-func (r *resyProvider) venueID(ctx context.Context, raw string) (string, error) {
+type resyVenueInfo struct {
+	ID    string
+	Notes []Note
+}
+
+// venueInfo resolves https://resy.com/cities/<location>/venues/<slug> to Resy's
+// numeric ID and collects the booking-window sentences from the venue's own listing text.
+func (r *resyProvider) venueInfo(ctx context.Context, raw string) (resyVenueInfo, error) {
+	if info, ok := r.cache[raw]; ok {
+		return info, nil
+	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return "", err
+		return resyVenueInfo{}, err
 	}
 	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 	if len(parts) < 3 || parts[0] != "cities" {
-		return "", fmt.Errorf("unexpected Resy URL %q", raw)
+		return resyVenueInfo{}, fmt.Errorf("unexpected Resy URL %q", raw)
 	}
 	q := url.Values{}
 	q.Set("url_slug", parts[len(parts)-1])
 	q.Set("location", parts[1])
 	b, err := r.get(ctx, "/3/venue", q)
 	if err != nil {
-		return "", err
+		return resyVenueInfo{}, err
 	}
 	var v struct {
 		ID struct {
 			Resy int64 `json:"resy"`
 		} `json:"id"`
+		Content []struct {
+			Name string `json:"name"`
+			Body string `json:"body"`
+		} `json:"content"`
 	}
 	if err := json.Unmarshal(b, &v); err != nil || v.ID.Resy == 0 {
-		return "", fmt.Errorf("no venue ID in response for %q", raw)
+		return resyVenueInfo{}, fmt.Errorf("no venue ID in response for %q", raw)
 	}
-	return strconv.FormatInt(v.ID.Resy, 10), nil
+	info := resyVenueInfo{ID: strconv.FormatInt(v.ID.Resy, 10)}
+	seen := map[string]bool{}
+	for _, c := range v.Content {
+		if c.Name != "about" && c.Name != "need_to_know" && c.Name != "from_the_venue" {
+			continue
+		}
+		for _, s := range splitSentences(c.Body) {
+			if bookingWindow.MatchString(s) && !seen[s] {
+				seen[s] = true
+				info.Notes = append(info.Notes, Note{Text: s, Source: "Resy listing"})
+			}
+		}
+	}
+	if r.cache == nil {
+		r.cache = map[string]resyVenueInfo{}
+	}
+	r.cache[raw] = info
+	return info, nil
+}
+
+var bookingWindow = regexp.MustCompile(`(?i)\b(in advance|go(es)? live|released?|days? (out|ahead)|weeks? (out|ahead)|up to (\d+|one|two|three|four) (days?|weeks?|months?)|midnight|bookings? open|reservations? open)\b`)
+
+// splitSentences splits on ., ! or ? followed by whitespace, and on line breaks.
+func splitSentences(s string) []string {
+	var out []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		end := (s[i] == '.' || s[i] == '!' || s[i] == '?') && (i+1 == len(s) || s[i+1] == ' ' || s[i+1] == '\n')
+		if end || s[i] == '\n' {
+			if t := strings.TrimSpace(s[start : i+1]); t != "" {
+				out = append(out, t)
+			}
+			start = i + 1
+		}
+	}
+	if t := strings.TrimSpace(s[start:]); t != "" {
+		out = append(out, t)
+	}
+	return out
+}
+
+func (r *resyProvider) ReleaseNotes(ctx context.Context, v Venue) ([]Note, error) {
+	info, err := r.venueInfo(ctx, v.URL)
+	return info.Notes, err
 }
 
 func (r *resyProvider) Availability(ctx context.Context, v Venue, dates []string) ([]DayAvailability, int, error) {
-	id, err := r.venueID(ctx, v.URL)
+	info, err := r.venueInfo(ctx, v.URL)
 	if err != nil {
 		return nil, 0, err
 	}
+	id := info.ID
 	var out []DayAvailability
 	checked := 0
 	var firstErr error
