@@ -165,6 +165,14 @@
 
     var rel = el('div', 'release');
     rel.appendChild(el('div', 'rel-title', 'When reservations open'));
+    if (v.release) {
+      var r = v.release;
+      var p0 = el('p', 'rel-note');
+      p0.appendChild(el('strong', '', clock(r.time) + ', ' + r.lead_days + ' days ahead'));
+      p0.appendChild(document.createTextNode(' — each date goes on sale at that time, ' + r.lead_days + ' days before it. '));
+      p0.appendChild(el('span', 'rel-src', 'Measured from Resy slot data (' + r.samples + ' slots), restaurant local time.'));
+      rel.appendChild(p0);
+    }
     if (v.release_notes && v.release_notes.length) {
       v.release_notes.forEach(function (n) {
         var p = el('p', 'rel-note');

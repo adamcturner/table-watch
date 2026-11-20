@@ -25,6 +25,8 @@ type resyProvider struct {
 	http   *http.Client
 	apiKey string
 	cache  map[string]resyVenueInfo
+	// release tallies on-sale rules per venue URL; see recordRelease.
+	release map[string]map[string]int
 }
 
 func newResy() *resyProvider {
@@ -141,6 +143,94 @@ func splitSentences(s string) []string {
 	return out
 }
 
+// probeRelease looks for any slot at other party sizes so the on-sale rule can be learned
+// for venues that have nothing open for the tracked party size. It scans every date for the
+// first party size that has any slots, then stops.
+func (r *resyProvider) probeRelease(ctx context.Context, v Venue, id string, dates []string) {
+	for _, party := range []int{4, 3, 5, 6, 1} {
+		for _, day := range dates {
+			q := url.Values{}
+			q.Set("lat", "0")
+			q.Set("long", "0")
+			q.Set("day", day)
+			q.Set("party_size", strconv.Itoa(party))
+			q.Set("venue_id", id)
+			b, err := r.get(ctx, "/4/find", q)
+			time.Sleep(300 * time.Millisecond)
+			if err != nil {
+				continue
+			}
+			var resp struct {
+				Results struct {
+					Venues []struct {
+						Slots []struct {
+							Market struct {
+								Date struct {
+									On int64 `json:"on"`
+								} `json:"date"`
+							} `json:"market"`
+						} `json:"slots"`
+					} `json:"venues"`
+				} `json:"results"`
+			}
+			if json.Unmarshal(b, &resp) != nil {
+				continue
+			}
+			for _, ven := range resp.Results.Venues {
+				for _, s := range ven.Slots {
+					r.recordRelease(v, day, s.Market.Date.On)
+				}
+			}
+		}
+		if len(r.release[v.URL]) > 0 {
+			return
+		}
+	}
+}
+
+// recordRelease tallies one slot's on-sale moment as "<local HH:MM>|<days before the dining date>".
+func (r *resyProvider) recordRelease(v Venue, day string, on int64) {
+	if on == 0 {
+		return
+	}
+	loc, err := time.LoadLocation(v.Timezone)
+	if err != nil {
+		return
+	}
+	d, err := time.ParseInLocation("2006-01-02", day, loc)
+	if err != nil {
+		return
+	}
+	onT := time.Unix(on, 0).In(loc)
+	onDay := time.Date(onT.Year(), onT.Month(), onT.Day(), 0, 0, 0, 0, loc)
+	lead := int(d.Sub(onDay).Round(24*time.Hour) / (24 * time.Hour))
+	if r.release == nil {
+		r.release = map[string]map[string]int{}
+	}
+	if r.release[v.URL] == nil {
+		r.release[v.URL] = map[string]int{}
+	}
+	r.release[v.URL][fmt.Sprintf("%s|%d", onT.Format("15:04"), lead)]++
+}
+
+// ObservedRelease returns the most common on-sale rule seen across this run's slots.
+func (r *resyProvider) ObservedRelease(v Venue) *Release {
+	var bestKey string
+	best, total := 0, 0
+	for k, n := range r.release[v.URL] {
+		total += n
+		if n > best || (n == best && k < bestKey) {
+			best, bestKey = n, k
+		}
+	}
+	if best == 0 {
+		return nil
+	}
+	parts := strings.Split(bestKey, "|")
+	lead, _ := strconv.Atoi(parts[1])
+	return &Release{Time: parts[0], LeadDays: lead, Timezone: v.Timezone, Samples: best}
+}
+
 func (r *resyProvider) ReleaseNotes(ctx context.Context, v Venue) ([]Note, error) {
 	info, err := r.venueInfo(ctx, v.URL)
 	return info.Notes, err
@@ -177,6 +267,11 @@ func (r *resyProvider) Availability(ctx context.Context, v Venue, dates []string
 						Date struct {
 							Start string `json:"start"`
 						} `json:"date"`
+						Market struct {
+							Date struct {
+								On int64 `json:"on"`
+							} `json:"date"`
+						} `json:"market"`
 					} `json:"slots"`
 				} `json:"venues"`
 			} `json:"results"`
@@ -192,6 +287,7 @@ func (r *resyProvider) Availability(ctx context.Context, v Venue, dates []string
 		var times []string
 		for _, ven := range resp.Results.Venues {
 			for _, s := range ven.Slots {
+				r.recordRelease(v, day, s.Market.Date.On)
 				// "2026-11-19 21:30:00" -> "21:30"
 				if len(s.Date.Start) >= 16 && !seen[s.Date.Start[11:16]] {
 					seen[s.Date.Start[11:16]] = true
@@ -204,6 +300,9 @@ func (r *resyProvider) Availability(ctx context.Context, v Venue, dates []string
 			out = append(out, DayAvailability{Date: day, Times: times})
 		}
 		time.Sleep(400 * time.Millisecond)
+	}
+	if v.NeedRelease && len(r.release[v.URL]) == 0 && ctx.Err() == nil {
+		r.probeRelease(ctx, v, id, dates)
 	}
 	return out, checked, firstErr
 }

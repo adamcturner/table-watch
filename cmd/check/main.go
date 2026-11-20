@@ -23,12 +23,29 @@ type Venue struct {
 	Timezone     string `json:"timezone"`
 	PartySize    int    `json:"party_size"`
 	ReleaseNotes []Note `json:"release_notes,omitempty"` // hand-written notes for providers that expose none
+
+	// NeedRelease is set at run time while no on-sale rule has been learned for the venue.
+	NeedRelease bool `json:"-"`
 }
 
 // Note is one statement about when reservations open, with where it came from.
 type Note struct {
 	Text   string `json:"text"`
 	Source string `json:"source"`
+}
+
+// Release is a booking-window rule measured from the provider's own slot data:
+// reservations for a date go on sale at Time (venue local) LeadDays before that date.
+type Release struct {
+	Time     string `json:"time"`
+	LeadDays int    `json:"lead_days"`
+	Timezone string `json:"timezone"`
+	Samples  int    `json:"samples"`
+}
+
+// ReleaseObserver is implemented by providers whose slots carry an on-sale timestamp.
+type ReleaseObserver interface {
+	ObservedRelease(v Venue) *Release
 }
 
 // ReleaseNoter is implemented by providers that can read a venue's booking-window policy.
@@ -57,6 +74,7 @@ type VenueStatus struct {
 	LastSeenSlots []DayAvailability `json:"last_seen_slots,omitempty"`
 	AvailableNow  []DayAvailability `json:"available_now"`
 	FurthestOpen  string            `json:"furthest_open,omitempty"`
+	Release       *Release          `json:"release,omitempty"`
 	ReleaseNotes  []Note            `json:"release_notes,omitempty"`
 }
 
@@ -113,6 +131,7 @@ func main() {
 			st.LastSeen = old.LastSeen
 			st.LastSeenSlots = old.LastSeenSlots
 			st.ReleaseNotes = old.ReleaseNotes
+			st.Release = old.Release
 		}
 
 		loc, err := time.LoadLocation(v.Timezone)
@@ -125,6 +144,7 @@ func main() {
 			dates = append(dates, today.AddDate(0, 0, i).Format("2006-01-02"))
 		}
 
+		v.NeedRelease = st.Release == nil
 		p, err := providerFor(v.Provider)
 		if err != nil {
 			st.Error = err.Error()
@@ -143,6 +163,15 @@ func main() {
 		}
 		if n := len(st.AvailableNow); n > 0 {
 			st.FurthestOpen = st.AvailableNow[n-1].Date
+		}
+		if ro, ok := p.(ReleaseObserver); ok {
+			if r := ro.ObservedRelease(v); r != nil {
+				// Sample counts only grow, so an unchanged rule does not rewrite the file.
+				if st.Release != nil && st.Release.Time == r.Time && st.Release.LeadDays == r.LeadDays {
+					r.Samples = max(r.Samples, st.Release.Samples)
+				}
+				st.Release = r
+			}
 		}
 		if err == nil {
 			if rn, ok := p.(ReleaseNoter); ok {
